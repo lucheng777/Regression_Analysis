@@ -1,0 +1,549 @@
+---
+title: "Regression Analysis on King County House Prices"
+output: pdf_document
+---
+
+# read data
+```{r}
+library(readr)
+library(tidyverse)
+library(GGally)
+library(gridExtra)
+library(modelr)
+library(broom)
+library(lubridate)
+library(dplyr)
+library(MASS)
+data <- read_csv("kc_house_data.csv")
+```
+
+#clean data
+
+```{r}
+#check na
+check_na <- data %>% map_lgl(function(x) any(is.na(x)))
+check_na
+# The dataset has complete data
+# clean data: changing the qualitative variables to the label (0,1)
+data_clean <- data %>% mutate(waterfront=factor(waterfront,levels = c(0,1),labels = c(0,1)),
+                              quarter=factor(quarter(date)),
+                              age=2019-yr_built,
+                              renovated=factor(yr_renovated!=0,labels = c(0,1)))
+```
+
+# several plots of predictors vs. price
+
+```{r}
+data_clean %>%
+  group_by(bedrooms) %>%
+  summarise(PriceMedian = median(price, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(bedrooms = reorder(bedrooms,PriceMedian)) %>%
+  arrange(desc(PriceMedian)) %>%
+ 
+  ggplot(aes(x = bedrooms,y = PriceMedian)) +
+  geom_bar(stat='identity',colour="white") +
+  geom_text(aes(x = bedrooms, y = 1, label = paste0("(",PriceMedian,")",sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'bedrooms', 
+       y = 'Median Price', 
+       title = 'bedrooms and Median Price') +
+  coord_flip() + 
+  theme_light()
+```
+
+```{r}
+data_clean %>%
+  group_by(waterfront) %>%
+  summarise(PriceMedian = median(price, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(waterfront = reorder(waterfront,PriceMedian)) %>%
+  arrange(desc(PriceMedian)) %>%
+  
+  ggplot(aes(x = waterfront,y = PriceMedian)) +
+  geom_bar(stat='identity',colour="white") +
+  
+  labs(x = 'waterfront', 
+       y = 'Median Price', 
+       title = 'waterfront and Median Price') +
+
+  theme_bw()
+```
+
+```{r}
+data_clean %>% 
+  filter(!is.na(price)) %>% 
+  filter(!is.na(sqft_living)) %>% 
+ 
+  ggplot(aes(x=sqft_living,y=price))+
+  geom_point(color = "blue")+
+  
+  stat_smooth(aes(x=sqft_living,y=price),method="lm", color="red")+
+  theme_bw()+
+  theme(axis.title = element_text(size=16),axis.text = element_text(size=14))+
+  xlab("(Sqft Living)")+
+  ylab("Price")
+```
+
+#split training and testing set
+
+```{r}
+set.seed(0)
+seed <- .Random.seed
+train_data <- data_clean %>% sample_frac(size=0.8) %>% mutate(split="train")
+test_data <- data_clean %>% anti_join(train_data,by="id") %>% mutate(split="test")
+```
+
+#Using the forward stepwise selection to select model
+Using F limit is 100 to add the variable
+
+```{r}
+Full = lm(price ~ bedrooms+bathrooms+sqft_living+sqft_lot+floors+waterfront+condition+grade+sqft_above+sqft_basement+sqft_living15+sqft_lot15+age+renovated+lat+long+zipcode+quarter, data=train_data)
+Null = lm(price ~ 1, data=train_data)
+```
+
+
+```{r}
+addterm(Null, scope = Full, test="F")
+#Because sqft_living here has the largest F value, which is also bigger than 10, I choose sqft_living into the model
+
+NewMod = update(Null,.~.+sqft_living)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+lat)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+waterfront)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+grade)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+age)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+bedrooms)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+bathrooms)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+zipcode)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+long)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+sqft_living15)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+condition)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+renovated)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+floors)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+quarter)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+sqft_lot15)
+addterm(NewMod,scope=Full,test="F")
+
+NewMod = update(NewMod,.~.+sqft_lot)
+addterm(NewMod,scope=Full,test="F")
+```
+
+So choose six variables, which are sqft_living, grade, waterfront, age, bedrooms and bathrooms, to build the model m1.
+
+#correlation matrix
+
+```{r}
+m1 <- NewMod
+# update the dataset
+data_for_model <- train_data %>% dplyr::select(price,sqft_living,lat,waterfront,grade,age,bedrooms,
+    bathrooms,zipcode,long,sqft_living15,condition,
+    renovated,floors,quarter,sqft_lot15,sqft_lot)
+# see the correlation matrix
+cor_mat <- cor(data_for_model %>% dplyr::select(-waterfront,-renovated,-quarter))
+#p1 <- pairs(data_for_model,lower.panel = NULL)
+cor_mat
+#p1
+```
+
+No obvious correlation between predictor variables.
+
+#visualize col_matrix
+
+```{r}
+library(corrplot)
+Correlationmap = cor(data_for_model %>% dplyr::select(-waterfront,-renovated,-quarter))
+corrplot(Correlationmap)
+```
+
+
+#fit the model
+
+```{r}
+# extract the fitted value and residual
+fit_m1 <- data_for_model %>% 
+  add_residuals(m1,"resids")%>%
+  add_predictions(m1,"preds")%>% 
+  dplyr::select(resids,preds)
+# plot residuals against the plot to see if it has a systemmatic pattern or nor
+g1 <- ggplot(fit_m1,aes(preds,resids))+
+  geom_point(alpha=0.3)+
+  geom_hline(yintercept=0,color="red")+
+  labs(title = "Residuals Have a Systemmatic Pattern",
+       x = "Fitted Prices ($)",
+       y = "Residuals ($)")+
+  theme_light()
+g1
+```
+
+From the plot, the error terms are not constant, so employ Box-Cox Transform to build model m2.
+Before that, check qqplot and histgram of residuals.
+
+#qqplot and histgram of residuals
+```{r}
+hist(fit_m1$resids,xlab='Fitted Values',main='')
+qqnorm(fit_m1$resids)
+qqline(fit_m1$resids)
+```
+From plot, see that normality assumption is violated badly.
+
+```{r}
+# From the plot, the error terms are not constant, so I chorose to transform the price variable to build model m2.
+boxcox(m1)
+```
+
+#fit log(price) m2
+According to Box-Cox, lambda = 0
+Hence take log(price) in m2
+
+```{r}
+m2 <- lm(log(price) ~ sqft_living + lat + waterfront + grade + age + bedrooms + 
+    bathrooms + zipcode + long + sqft_living15 + condition + 
+    renovated + floors + quarter + sqft_lot15 + sqft_lot, data=data_for_model)
+fit_m2 <- data_for_model %>% add_residuals(m2,"resids")%>%add_predictions(m2,"preds")%>% dplyr::select(resids,preds)
+# plot residuals against the plot to see if it has a systemmatic pattern or not
+g2 <- ggplot(fit_m2,aes(preds,resids))+
+  geom_point(alpha=0.3)+
+  geom_hline(yintercept=0,color="red")+
+  labs(title = "Residuals Almost Have No Pattern",
+       x = "Fitted Prices ($)",
+       y = "Residuals ($)")+
+  theme_light()
+m2
+g2
+```
+
+#check qq and hist
+```{r}
+hist(fit_m2$resids,xlab='Fitted Values',main='')
+qqnorm(fit_m2$resids)
+qqline(fit_m2$resids)
+```
+several outliers spotted.
+
+#bp-test
+```{r}
+library(lmtest)
+bptest(m2,studentize=FALSE,data=data_for_model)
+```
+reject constancy
+
+#remove the outliers from the dataset
+Using Cook's distance to identify the outliers:
+
+```{r}
+outliers <- augment(m2)%>%
+  mutate(key=row_number())%>%
+  filter(.cooksd>=4/nrow(.))%>% 
+  dplyr::select(key)
+outliers
+remove_outliers <- function(df,outliers)
+  df %>% mutate(key=row_number())%>%anti_join(outliers,by="key")%>% dplyr::select(-key)
+```
+
+# update the data by removing outliers:
+
+```{r}
+data_no_outlier <- remove_outliers(data_for_model,outliers)
+
+m2_no_outlier <- lm(log(price) ~ sqft_living + lat + waterfront + grade + age + bedrooms + 
+    bathrooms + zipcode + long + sqft_living15 + condition + 
+    renovated + floors + quarter + sqft_lot15 + sqft_lot, data=data_no_outlier)
+fit_m2_no_outlier <- data_no_outlier %>% 
+  add_residuals(m2_no_outlier,"resids")%>%
+  add_predictions(m2_no_outlier,"preds")%>% 
+  dplyr::select(resids,preds)
+
+g3 <- ggplot(fit_m2_no_outlier,aes(preds,resids))+
+  geom_point(alpha=0.3)+
+  geom_hline(yintercept=0,color="red")+
+  labs(title = "Residuals Almost Have No Pattern",
+       subtitle = "Potential outliers spotted.",
+       x = "Fitted Prices ($)",
+       y = "Residuals ($)")+
+  theme_light()
+g3
+
+#folowing are several failed trials
+
+#water_data <- data_no_outlier %>%
+#  dplyr::filter(waterfront == 1)
+
+#m3 <- lm(log(price) ~ sqft_living + grade + age + bedrooms + bathrooms, data = water_data, weights = NULL)
+#fit_m3 <- water_data %>% 
+#  add_residuals(m3,"resids")%>%
+#  add_predictions(m3,"preds")%>% 
+#  dplyr::select(resids,preds)
+
+#g4 <- ggplot(fit_m3,aes(preds,resids))+
+#  geom_point(alpha=0.3)+
+#  geom_hline(yintercept=0,color="red")+
+#  labs(title = "Residuals Almost Have No Pattern",
+#       subtitle = "Potential outliers spotted.",
+#       x = "Fitted Prices ($)",
+#       y = "Residuals ($)")+
+#  theme_light()
+#g4
+
+#no_water_data <- data_no_outlier %>%
+#  dplyr::filter(waterfront == 0) %>%
+#  mutate(grade = grade - mean(grade),
+#         sqft_living = sqft_living - mean(sqft_living),
+#         age = age - mean(age),
+#         bedrooms = bedrooms - mean(bedrooms),
+#         bathrooms = bathrooms - mean(bathrooms))
+
+#m4 <- lm(log(price) ~ sqft_living + grade + age + bedrooms + bathrooms, data = no_water_data, weights = NULL)
+#fit_m4 <- no_water_data %>% 
+#  add_residuals(m4,"resids")%>%
+#  add_predictions(m4,"preds")%>% 
+#  dplyr::select(resids,preds)
+
+#g5 <- ggplot(fit_m4,aes(preds,resids))+
+#  geom_point(alpha=0.3)+
+#  geom_hline(yintercept=0,color="red")+
+#  labs(title = "Residuals Almost Have No Pattern",
+#       subtitle = "Potential outliers spotted.",
+#       x = "Fitted Prices ($)",
+#       y = "Residuals ($)")+
+#  theme_light()
+#g5
+
+#boxcox(m2_no_outlier, 
+#    lambda = seq(-4, 4, by = 0.5), 
+#    optimize = FALSE, objective.name = "PPCC", 
+#    eps = .Machine$double.eps, include.x = TRUE)
+
+#wgt <- 1 / lm(abs(m2_no_outlier$residuals) ~ m2_no_outlier$fitted.values)$fitted.values^2
+#wgt <- m2_no_outlier$residuals^2
+#wgt <- c(1:length(m2_no_outlier$residuals))
+#m3 <- lm(log(price) ~ sqft_living + grade + waterfront + age + bedrooms + bathrooms, data = data_no_outlier, weights = wgt)
+#fit_m3 <- data_no_outlier %>% 
+#  add_residuals(m3,"resids")%>%
+#  add_predictions(m3,"preds")%>% 
+#  dplyr::select(resids,preds)
+
+#g4 <- ggplot(fit_m3,aes(preds,resids))+
+#  geom_point(alpha=0.3)+
+#  geom_hline(yintercept=0,color="red")+
+#  labs(title = "Residuals Almost Have No Pattern",
+#       subtitle = "Potential outliers spotted.",
+#       x = "Fitted Prices ($)",
+#       y = "Residuals ($)")+
+#  theme_light()
+#g4
+
+#m3 <- lm(price^0.25 ~ bedrooms+bathrooms+sqft_living+sqft_lot+floors+waterfront+condition+grade+sqft_above+sqft_basement+sqft_living15+sqft_lot15+age, data=train_data)
+#fit_m3 <- train_data %>% 
+#  add_residuals(m3,"resids")%>%
+#  add_predictions(m3,"preds")%>% 
+#  dplyr::select(resids,preds)
+
+#g4 <- ggplot(fit_m3,aes(preds,resids))+
+#  geom_point(alpha=0.3)+
+#  geom_hline(yintercept=0,color="red")+
+#  labs(title = "Residuals Almost Have No Pattern",
+#       subtitle = "Potential outliers spotted.",
+#       x = "Fitted Prices ($)",
+#       y = "Residuals ($)")+
+#  theme_light()
+#g4
+
+```
+
+#his and qqplot
+```{r}
+hist(fit_m2_no_outlier$resids,xlab='Fitted Values',main='')
+qqnorm(fit_m2_no_outlier$resids)
+qqline(fit_m2_no_outlier$resids)
+```
+#ncvtest
+```{r}
+library(car)
+ncvTest(m2_no_outlier)
+```
+still non-constant.
+
+#multicolinearlity.
+A VIF larger than 10 indicates multicolinearity. We have no VIF larger than 10, so this indicates no multicollinearity. A tolerance lower 0.2 indicates problems. In our cases the tolerance levels are all higher than 0.2, thus no problems here. Also the mean VIF is around 1, so no bias here.
+```{r}
+library(car)
+vif(m2_no_outlier)
+```
+```{r}
+# tolerance
+1/vif(m2_no_outlier)
+```
+```{r}
+# mean VIF
+mean(vif(m2_no_outlier))
+```
+No multicolinearity spotted.
+
+#interaction plots
+```{r}
+plot(x = data_no_outlier$sqft_living, y = fit_m2_no_outlier$resids, 
+     xlab = 'sqrt_living', ylab = 'residual',
+     main = 'residual plot against sqft_living')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$grade, y = fit_m2_no_outlier$resids, 
+     xlab ='grade', ylab = 'residual',
+     main = 'residual plot against grade')
+qqline(0, col = 2)
+
+plot(x = as.numeric(data_no_outlier$waterfront) - 1, y = fit_m2_no_outlier$resids, 
+     xlab ='waterfront', ylab = 'residual',
+     main = 'residual plot against waterfront')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$age, y = fit_m2_no_outlier$resids, 
+     xlab ='age', ylab = 'residual',
+     main = 'residual plot against age')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$bedrooms, y = fit_m2_no_outlier$resids, 
+     xlab ='bedrooms', ylab = 'residual',
+     main = 'residual plot against bedrooms')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$bathrooms, y = fit_m2_no_outlier$resids, 
+     xlab ='bathrooms', ylab = 'residual',
+     main = 'residual plot against bathrooms')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$sqft_living * data_no_outlier$grade, y = fit_m2_no_outlier$resids,
+     xlab ='sqft_living*grade', ylab = 'residual', 
+     main = 'residual plot against sqft_living*grade')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$sqft_living * (as.numeric(data_no_outlier$waterfront) - 1), y = fit_m2_no_outlier$resids,
+     xlab ='sqft_living*waterfront', ylab = 'residual', 
+     main = 'residual plot against sqft_living*waterfront')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$sqft_living * data_no_outlier$age, y = fit_m2_no_outlier$resids,
+     xlab ='sqft_living*age', ylab = 'residual', 
+     main = 'residual plot against sqft_living*age')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$sqft_living * data_no_outlier$bedrooms, y = fit_m2_no_outlier$resids,
+     xlab ='sqft_living*bedrooms', ylab = 'residual', 
+     main = 'residual plot against sqft_living*bedrooms')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$sqft_living * data_no_outlier$bathrooms, y = fit_m2_no_outlier$resids,
+     xlab ='sqft_living*bathrooms', ylab = 'residual', 
+     main = 'residual plot against sqft_living*bathrooms')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$grade * (as.numeric(data_no_outlier$waterfront) - 1), y = fit_m2_no_outlier$resids,
+     xlab ='grade*waterfront', ylab = 'residual', 
+     main = 'residual plot against grade*waterfront')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$grade * data_no_outlier$age, y = fit_m2_no_outlier$resids,
+     xlab ='grade*age', ylab = 'residual', 
+     main = 'residual plot against grade*age')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$grade * data_no_outlier$bedrooms, y = fit_m2_no_outlier$resids,
+     xlab ='grade*bedrooms', ylab = 'residual', 
+     main = 'residual plot against grade*bedrooms')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$grade * data_no_outlier$bathrooms, y = fit_m2_no_outlier$resids,
+     xlab ='grade*bathrooms', ylab = 'residual', 
+     main = 'residual plot against grade*bathrooms')
+qqline(0, col = 2)
+
+plot(x = (as.numeric(data_no_outlier$waterfront) - 1) * data_no_outlier$age, y = fit_m2_no_outlier$resids,
+     xlab ='waterfront*age', ylab = 'residual', 
+     main = 'residual plot against waterfront*age')
+qqline(0, col = 2)
+
+plot(x = (as.numeric(data_no_outlier$waterfront) - 1) * data_no_outlier$bedrooms, y = fit_m2_no_outlier$resids,
+     xlab ='waterfront*bedrooms', ylab = 'residual', 
+     main = 'residual plot against waterfront*bedrooms')
+qqline(0, col = 2)
+
+plot(x = (as.numeric(data_no_outlier$waterfront) - 1) * data_no_outlier$bathrooms, y = fit_m2_no_outlier$resids,
+     xlab ='waterfront*bathrooms', ylab = 'residual', 
+     main = 'residual plot against waterfront*bathrooms')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$age * data_no_outlier$bedrooms, y = fit_m2_no_outlier$resids,
+     xlab ='age*bedrooms', ylab = 'residual', 
+     main = 'residual plot against age*bedrooms')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$age * data_no_outlier$bathrooms, y = fit_m2_no_outlier$resids,
+     xlab ='age*bathrooms', ylab = 'residual', 
+     main = 'residual plot against age*bathrooms')
+qqline(0, col = 2)
+
+plot(x = data_no_outlier$bedrooms * data_no_outlier$bathrooms, y = fit_m2_no_outlier$resids,
+     xlab ='bedrooms*bathrooms', ylab = 'residual', 
+     main = 'residual plot against bedrooms*bathrooms')
+qqline(0, col = 2)
+```
+
+No obvious tendency spotted.
+
+Test fitted model on test set.
+
+```{r}
+test_data_clean <- test_data %>% dplyr::select(price,sqft_living,lat,waterfront,grade,age,bedrooms,
+    bathrooms,zipcode,long,sqft_living15,condition,
+    renovated,floors,quarter,sqft_lot15,sqft_lot)
+
+prediction <- test_data_clean %>% 
+  add_residuals(m2_no_outlier,"resids")%>%
+  add_predictions(m2_no_outlier,"preds")%>% 
+  dplyr::select(resids,preds)
+g4 <- ggplot(prediction,aes(preds,resids))+
+  geom_point(alpha=0.3)+
+  geom_hline(yintercept=0,color="red")+
+  labs(title = "Residuals Almost Have No Pattern",
+       subtitle = "Potential outliers spotted.",
+       x = "Fitted Prices ($)",
+       y = "Residuals ($)")+
+  theme_light()
+g4
+```
+
+As we can see, the absolute value of final residuals of our prediction are mostly well within 1.0, while no obvious pattern detected. No problem of overfitting.
+
+
+
+
+
+
